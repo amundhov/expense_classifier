@@ -48,9 +48,18 @@ def split(delimiters, string, maxsplit=0):
     return re.split(regexPattern, string, maxsplit)
 
 
-def extract_transaction_features(tr):
+def extract_transaction_features(tr, acc_map):
     delimiters = [" ", "/"]
     description = set(split(delimiters, tr.description))
+    if tr.splits[0].account.fullname in PREDICTION_ACCOUNTS:
+        base_account = tr.splits[0].account.fullname
+        output_account = tr.splits[1].account.fullname
+        debit = 0
+    else:
+        base_account = tr.splits[1].account.fullname
+        output_account = tr.splits[0].account.fullname
+        debit = 1
+    assert base_account in PREDICTION_ACCOUNTS
     try:
         description.union(split(
             delimiters,
@@ -59,19 +68,20 @@ def extract_transaction_features(tr):
     except AttributeError:
         pass
     except IndexError:
-        if tr.notes != tr.description:
-            description.union(split(
-                delimiters,
-                str(tr.notes
-            )))
+        description.union(split(
+            delimiters,
+            str(tr.notes)))
     return {
+        'full_description': tr.description,
         'description': set(word for word in description if len(word) > 3),
-        'account1': tr.splits[0].account.fullname,
-        'account2': tr.splits[1].account.fullname,
-        'amount': abs(functools.reduce(lambda x,y: x or y, [spl.quantity for spl in tr.splits])),
+        'base_account': base_account,
+        'output_account': output_account,
+        'mapped_output_account': acc_map[output_account],
+        'amount': functools.reduce(lambda x,y: x or y, [spl.quantity for spl in tr.splits]),
+        'debit': debit,
         'date': tr.post_date,
-        'day': tr.post_date.day,
-        'weekday': tr.post_date.isoweekday(),
+        'day': tr.post_date.isoweekday(),
+        'isWeekend': int(tr.post_date.isoweekday() in [6, 7]),
 }
 
 def get_word_mapping(table):
@@ -80,7 +90,7 @@ def get_word_mapping(table):
         for row in table
         for word in row['description']
     ))
-    return words, {j:i for i, j in enumerate(words)}
+    return {j:i for i, j in enumerate(words)}
 
 
 DATA='data'
@@ -90,60 +100,57 @@ MAPPED_METADATA='mapped_metadata'
 MAPPED_DESCRIPTION='mapped_description'
 ACCOUNT_LABELS='account_labels'
 ACCOUNT_MAP='account_map'
-WORDS='words'
 WORD_MAP='word_map'
 OUTPUT_ACCOUNTS='output_accounts'
 MAPPED_OUTPUT_ACCOUNTS='mapped_output_accounts'
 
 class TransactionFeatureSet(object):
 
-    PREDICTION_DATA_LABELS = [
-        DATA, MAPPED_METADATA, MAPPED_DESCRIPTION,
-        ACCOUNT_LABELS, ACCOUNT_MAP, WORDS, WORD_MAP,
-        OUTPUT_ACCOUNTS, MAPPED_OUTPUT_ACCOUNTS,
-    ]
+    #PREDICTION_DATA_LABELS = [
+    #    DATA, MAPPED_METADATA, MAPPED_DESCRIPTION,
+    #    ACCOUNT_LABELS, ACCOUNT_MAP, WORD_MAP,
+    #    OUTPUT_ACCOUNTS, MAPPED_OUTPUT_ACCOUNTS,
+    #]
 
     def __init__(self, book_file, cache=True):
         self.book = piecash.open_book(args.file_, readonly=True)
         self.data = None
-        if cache:
-            try:
-                with open('data_cache.json', 'rb') as file_:
-                    pickled_data = pickle.load(file_)
-                    self.data = {o:j for o,j in zip(self.PREDICTION_DATA_LABELS, pickled_data)}
-            except IOError:
-                pass
-        if self.data is None:
-            self.setup_data()
-            with open("data_cache.json", 'wb') as file_:
-                pickle.dump([self.data[label] for label in self.PREDICTION_DATA_LABELS], file_)
-
-        self.fit_descriptions()
-        description_features = self.get_description_probabilities(self.data[MAPPED_DESCRIPTION])
-        self.full_features = np.hstack([
-            self.data[MAPPED_METADATA],
-            description_features,
-        ])
-        self.fit(self.full_features, self.data[MAPPED_OUTPUT_ACCOUNTS])
-
-    def setup_data(self):
-        data = [
-            extract_transaction_features(tr)
+        #if cache:
+        #    try:
+        #        with open('data_cache.json', 'rb') as file_:
+        #            pickled_data = pickle.load(file_)
+        #            self.data = {o:j for o,j in zip(self.PREDICTION_DATA_LABELS, pickled_data)}
+        #    except IOError:
+        #        pass
+        self.account_labels = [a.fullname for a in self.book.accounts]
+        self.acc_map = {j:i for i, j in enumerate(self.account_labels)}
+        self.data = [
+            extract_transaction_features(tr, self.acc_map)
             for tr in Prediction_Transactions(self.book)
         ]
-        account_labels, acc_map, words, word_map = self.get_mappings(data)
-        output_accounts, mapped_output_accounts = self.get_output_accounts(data, acc_map)
-        self.data = {
-            DATA: data,
-            MAPPED_METADATA: self.get_mapped_features(data, acc_map),
-            MAPPED_DESCRIPTION: self.get_mapped_description_features(data, word_map),
-            ACCOUNT_LABELS: account_labels,
-            ACCOUNT_MAP: acc_map,
-            WORDS: words,
-            WORD_MAP: word_map,
-            OUTPUT_ACCOUNTS: output_accounts,
-            MAPPED_OUTPUT_ACCOUNTS: mapped_output_accounts,
-        }
+        self.setup_classifier(self.data)
+
+    def get_full_features(self, transactions):
+        mapped_metadata = self.get_mapped_metadata(transactions, self.acc_map)
+        mapped_description = self.get_mapped_description_features(transactions, self.word_map)
+        description_features = self.get_description_probabilities(mapped_description)
+        full_features = np.hstack([
+            mapped_metadata,
+            description_features,
+        ])
+        return full_features
+
+    def setup_classifier(self, transactions):
+        self.word_map = get_word_mapping(transactions)
+
+        mapped_output_accounts = np.array([tr['mapped_output_account'] for tr in transactions], dtype=np.int)
+
+        mapped_description = self.get_mapped_description_features(transactions, self.word_map)
+        self.fit_descriptions(mapped_description, mapped_output_accounts)
+
+        self.full_features = self.get_full_features(transactions)
+        self.fit(self.full_features, mapped_output_accounts)
+
 
     def fit(self, full_features, output_classes):
         #print(metadata_features[0])
@@ -171,48 +178,40 @@ class TransactionFeatureSet(object):
         output_labels = [self.data[ACCOUNT_LABELS][o] for o in self.data[MAPPED_OUTPUT_ACCOUNTS]]
         print('\n'.join(str(o) for o in zip(self.data[MAPPED_OUTPUT_ACCOUNTS], ['{} -> {}'.format(pred,out,) for pred, out in zip(predicted_labels, output_labels)])))
 
-    def fit_descriptions(self):
+    def fit_descriptions(self, mapped_descriptions, mapped_accounts):
         self.description_model = GaussianNB()
-        self.description_model.fit(self.data[MAPPED_DESCRIPTION], self.data[MAPPED_OUTPUT_ACCOUNTS])
+        self.description_model.fit(mapped_descriptions, mapped_accounts)
         #print("Score bayesian description only: {}".format(self.description_model.score(self.data[MAPPED_DESCRIPTION], self.data[MAPPED_OUTPUT_ACCOUNTS])))
-        predicted = self.description_model.predict(self.data[MAPPED_DESCRIPTION])
 
     def get_description_probabilities(self, descriptions):
         return np.array(self.description_model.predict_proba(descriptions))
         
-    def get_mappings(self, data):
-        account_labels = [a.fullname for a in self.book.accounts]
-        acc_map = { j:i for i,j in enumerate(account_labels)}
-        words, word_map = get_word_mapping(data)
-        return account_labels, acc_map, words, word_map
 
-    def get_mapped_description_features(self, data, word_map):
+    @staticmethod
+    def get_mapped_description_features(data, word_map):
         features = np.zeros((len(data), len(word_map)))
         for i, row in enumerate(data):
             for word, j in word_map.items():
                 features[i][j] = 1 if word in row['description'] else 0
         return features
 
-    def get_output_accounts(self, data, acc_map):
-        output_accounts = [ row['account1'] for row in data ]
-        mapped_output_accounts = np.zeros(len(data), dtype=np.int)
-        for i, row in enumerate(data):
-            mapped_output_accounts[i] = acc_map[row['account1']]
-        return output_accounts, mapped_output_accounts
+    @staticmethod
+    def get_output_accounts(data):
+        mapped_output_accounts = np.array([tr['mapped_output_account'] for tr in data], dtype=np.int)
+        #for i,  in enumerate(data):
+        #    mapped_output_accounts[i] = row['mapped_output_account']
+        #return output_accounts, mapped_output_accounts
 
-    feature_list = ['account2', 'amount', 'day', 'weekday']
+    feature_list = ['base_account', 'debit', 'amount', 'day', 'isWeekend']
 
-    def get_mapped_features(self, data, acc_map):
-        features = np.zeros((len(data), len(self.feature_list)))
-        for i, row in enumerate(data):
-            features[i][0] = acc_map[row['account2']]
-            features[i][1] = row['amount']
-            features[i][2] = row['day']
-            features[i][3] = row['weekday']
+    @classmethod
+    def get_mapped_metadata(cls, data, acc_map):
+        features = np.zeros((len(data), len(cls.feature_list)))
+        for i, tr in enumerate(data):
+            for j, feature in enumerate(cls.feature_list[1:]):
+                features[i][j] = tr[feature]
+            features[i][-1] = acc_map[tr['base_account']]
         return features
-
-    def get_transactions(self):
-        return self.data[DATA]
 
 if __name__ == '__main__':
     import argparse
@@ -229,12 +228,9 @@ if __name__ == '__main__':
     featureset = TransactionFeatureSet(args.file_, cache=args.use_cache)
 
     from assign_transactions import assignAccounts
-    transactions = tuple(zip(
-        featureset.data[DATA],
-        featureset.full_features
-    ))
     assignAccounts(
-        transactions,
+        featureset.data,
+        featureset.full_features,
         featureset.full_classifier,
-        featureset.data[ACCOUNT_LABELS],
+        featureset.account_labels
     )
