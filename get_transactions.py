@@ -106,22 +106,9 @@ MAPPED_OUTPUT_ACCOUNTS='mapped_output_accounts'
 
 class TransactionFeatureSet(object):
 
-    #PREDICTION_DATA_LABELS = [
-    #    DATA, MAPPED_METADATA, MAPPED_DESCRIPTION,
-    #    ACCOUNT_LABELS, ACCOUNT_MAP, WORD_MAP,
-    #    OUTPUT_ACCOUNTS, MAPPED_OUTPUT_ACCOUNTS,
-    #]
-
     def __init__(self, book_file, cache=True):
-        self.book = piecash.open_book(args.file_, readonly=True)
-        self.data = None
-        #if cache:
-        #    try:
-        #        with open('data_cache.json', 'rb') as file_:
-        #            pickled_data = pickle.load(file_)
-        #            self.data = {o:j for o,j in zip(self.PREDICTION_DATA_LABELS, pickled_data)}
-        #    except IOError:
-        #        pass
+        self.book = piecash.open_book(book_file, readonly=True)
+
         self.account_labels = [a.fullname for a in self.book.accounts]
         self.acc_map = {j:i for i, j in enumerate(self.account_labels)}
         self.data = [
@@ -157,9 +144,6 @@ class TransactionFeatureSet(object):
         self.full_classifier = RandomForestClassifier()
         self.full_classifier.fit(full_features, output_classes)
         #print("Score full classifier: {}".format(self.full_classifier.score(full_features, self.data[MAPPED_OUTPUT_ACCOUNTS])))
-        #print(self.full_classifier.predict_proba(full_features))
-        #predicted = self.description_model.predict(self.data[MAPPED_DESCRIPTION])
-        ##self.print_prediction(predicted)
         #instances = full_features[[0,4,10]]
         #prediction, bias, contributions = ti.predict(self.full_classifier, instances)
         #for i in range(len(instances)):
@@ -185,7 +169,7 @@ class TransactionFeatureSet(object):
 
     def get_description_probabilities(self, descriptions):
         return np.array(self.description_model.predict_proba(descriptions))
-        
+
 
     @staticmethod
     def get_mapped_description_features(data, word_map):
@@ -227,7 +211,7 @@ if __name__ == '__main__':
 
     featureset = TransactionFeatureSet(args.file_, cache=args.use_cache)
 
-    from assign_transactions import assignAccounts
+    from .assign_transactions import assignAccounts
     assignAccounts(
         featureset.data,
         featureset.full_features,
