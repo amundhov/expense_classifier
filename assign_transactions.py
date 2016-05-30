@@ -1,7 +1,6 @@
-import curses
-from curses import wrapper
 import urwid.curses_display
 import urwid
+
 
 class TransactionItem(urwid.Text):
     def __init__(self, text):
@@ -16,6 +15,7 @@ class TransactionItem(urwid.Text):
 
     def selectable(self):
         return True
+
 
 class TransactionBox(urwid.Pile):
     def __init__(self):
@@ -49,9 +49,9 @@ class TransactionBox(urwid.Pile):
         )
 
 
-
 class MainFrame(urwid.Frame):
-    def __init__(self, transactions, full_features, classifier, account_labels):
+    def __init__(self, transactions, full_features,
+                 classifier, account_labels):
         self.transactions = transactions
         self.full_features = full_features
         self.classifier = classifier
@@ -67,7 +67,7 @@ class MainFrame(urwid.Frame):
         self.transaction_box = TransactionBox()
         super().__init__(
             urwid.LineBox(self.listbox),
-            header= urwid.Pile([
+            header=urwid.Pile([
                 urwid.LineBox(self.transaction_box),
                 self.filter_edit,
             ])
@@ -79,23 +79,17 @@ class MainFrame(urwid.Frame):
                 urwid.AttrMap(
                     TransactionItem('transaction {}'.format(o)),
                     'selectable', 'focus')
-                for o in range(0,10)
+                for o in range(0, 10)
             ]
             self.transaction_walker.extend(items)
         else:
             self.loadTransaction(self._index)
 
-    #def render(self, size, focus=False):
-    #    if not self._last_index == self._index:
-    #        self.loadTransaction(self._index)
-    #    return super().render(size, focus=focus)
-
     def _transaction_line(self, output_account, probability):
         return urwid.AttrMap(
             TransactionItem('{:.2%} {}'.format(
                 probability,
-                ':'.join(
-                reversed(
+                ':'.join(reversed(
                     self.account_labels[output_account].split(':')
                 ))
             )),
@@ -111,8 +105,28 @@ class MainFrame(urwid.Frame):
     def commit(self):
         walker_index = self.transaction_walker.focus
         output_account, _ = self._predictions[walker_index]
-        self.transactions[self._index]['mapped_output_account'] = output_account
-        self.transactions[self._index]['output_account'] = self.account_labels[output_account]
+        transaction = self.transactions[self._index]
+        transaction['mapped_output_account'] = output_account
+        transaction['output_account'] = self.account_labels[output_account]
+
+    def _set_predictions(self, predictions):
+        self.transaction_walker.clear()
+        self.transaction_walker.extend([
+            self._transaction_line(output_account, prob)
+            for output_account, prob in predictions
+        ])
+
+    def update_filter(self):
+        filter_string = self.filter_edit.edit_text.strip().lower()
+        if len(filter_string) == 0:
+            self._set_predictions(self._predictions)
+        self.transaction_walker.clear()
+        predictions = filter(
+            lambda x: filter_string in self.account_labels[x[0]].lower(),
+            self._predictions
+        )
+        self._set_predictions(predictions)
+        self.transaction_walker.set_focus(0)
 
     def loadTransaction(self, index):
         transaction = self.transactions[index]
@@ -121,28 +135,15 @@ class MainFrame(urwid.Frame):
 
         [probabilities] = self.classifier.predict_proba([mapped_features])
         self._predictions = [
-            (self.classifier.classes_[[index]], prob) 
+            (self.classifier.classes_[[index]], prob)
             for index, prob in enumerate(probabilities)
         ]
-        self._predictions = sorted(self._predictions,
-                             reverse=True,
-                             key=lambda x: x[1],
-                            )
-        self.transaction_walker.clear()
-        self.transaction_walker.extend([
-            self._transaction_line(output_account, prob)
-            for output_account, prob in self._predictions
-            if prob > 0
-        ])
-        self.transaction_walker.append(urwid.Divider(
-            div_char=u'-',
-            top=1,
-        ))
-        self.transaction_walker.extend([
-            self._transaction_line(output_account, prob)
-            for output_account, prob in self._predictions
-            if prob <= 0
-        ])
+        self._predictions = sorted(
+            self._predictions,
+            reverse=True,
+            key=lambda x: x[1],
+        )
+        self._set_predictions(self._predictions)
 
         if 'output_account' in transaction:
             try:
@@ -154,7 +155,6 @@ class MainFrame(urwid.Frame):
         else:
             focus = 0
         self.transaction_walker.set_focus(focus)
-
 
     def keypress(self, size, key):
         if key in ['up', 'down']:
@@ -171,11 +171,13 @@ class MainFrame(urwid.Frame):
                 self.update()
         else:
             self.filter_edit.keypress([size[0]], key)
+            self.update_filter()
 
-def assignAccounts(transactions=None, full_features=None, classifier=None, account_labels=None,):
+
+def assignAccounts(transactions=None, full_features=None,
+                   classifier=None, account_labels=None,):
     palette = [
         ('focus', 'black,bold',  'light cyan'),
-        #('selectable','black', 'dark cyan'),
     ]
     urwid.MainLoop(urwid.Padding(
         MainFrame(transactions, full_features, classifier, account_labels),
