@@ -1,21 +1,23 @@
 import urwid.curses_display
 import urwid
 
+from piecash.core.factories import single_transaction
+
+import logging
+logger = logging.getLogger(__name__)
+
 
 class TransactionItem(urwid.Text):
-    def __init__(self, text):
+    # TODO keep output account to enable searching index for correct index
+    def __init__(self, text, output_account=None):
         super().__init__(text)
-        urwid.register_signal(self.__class__, ['commit'])
-
-    def keypress(self, size, key):
-        if key == 'enter':
-            urwid.emit_signal(self, 'commit')
-        else:
-            return key
+        self.output_account = output_account
 
     def selectable(self):
         return True
 
+    def keypress(self, size, key):
+        return key
 
 class TransactionBox(urwid.Pile):
     def __init__(self):
@@ -37,15 +39,15 @@ class TransactionBox(urwid.Pile):
         self.description.set_text(description)
 
     def loadTransaction(self, transaction):
-        date = transaction['date'].strftime('%c')
+        date = transaction.date.strftime('%c')
         self._loadTransaction(
-            account=transaction['base_account'],
+            account=transaction.base_account,
             amount='%s%s,-' % (
-                '-' if transaction['debit'] else '',
-                transaction['amount']
+                '-' if transaction.debit else '',
+                transaction.amount
             ),
             date=date,
-            description=transaction['full_description'],
+            description=transaction.full_description,
         )
 
 
@@ -77,7 +79,9 @@ class MainFrame(urwid.Frame):
         if transactions is None:
             items = [
                 urwid.AttrMap(
-                    TransactionItem('transaction {}'.format(o)),
+                    TransactionItem(
+                        'transaction {}'.format(o)
+                    ),
                     'selectable', 'focus')
                 for o in range(0, 10)
             ]
@@ -87,12 +91,14 @@ class MainFrame(urwid.Frame):
 
     def _transaction_line(self, output_account, probability):
         return urwid.AttrMap(
-            TransactionItem('{:.2%} {}'.format(
-                probability,
-                ':'.join(reversed(
-                    self.account_labels[output_account].split(':')
-                ))
-            )),
+            TransactionItem(
+                '{:.2%} {}'.format(
+                    probability,
+                    ':'.join(reversed(
+                        self.account_labels[output_account].split(':')
+                    ))),
+                output_account=output_account
+            ),
             'selectable', 'focus'
         )
 
@@ -104,10 +110,30 @@ class MainFrame(urwid.Frame):
 
     def commit(self):
         walker_index = self.transaction_walker.focus
+        logger.info(self.transaction_walker[walker_index])
         output_account, _ = self._predictions[walker_index]
         transaction = self.transactions[self._index]
-        transaction['mapped_output_account'] = output_account
-        transaction['output_account'] = self.account_labels[output_account]
+        transaction.mapped_output_account = output_account
+        transaction.output_account = self.account_labels[output_account]
+        self.filter_edit.set_edit_text('')
+
+    def save_transactions(self):
+        commited_transactions = [
+            tran
+            for tran in self.transactions
+            if tran.mapped_output_account is not None
+        ]
+        for tran in commited_transactions:
+            gc_tran = single_transaction(
+                post_date=tran.date,
+                enter_date=tran.date,
+                description=tran.full_description,
+                value=tran.amount,
+                from_account=tran.base_account,
+                to_account=tran.output_account,
+            )
+            logger.info(gc_tran)
+            del self.transactions[tran]
 
     def _set_predictions(self, predictions):
         self.transaction_walker.clear()
@@ -145,11 +171,11 @@ class MainFrame(urwid.Frame):
         )
         self._set_predictions(self._predictions)
 
-        if 'output_account' in transaction:
+        if transaction.output_account is not None:
             try:
                 focus = [
                     output_account for output_account, _ in self._predictions
-                ].index(transaction['mapped_output_account'])
+                ].index(transaction.mapped_output_account)
             except ValueError:
                 focus = 0
         else:

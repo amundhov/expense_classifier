@@ -1,15 +1,18 @@
 import numpy as np
 import piecash
 import functools
-import pickle
-import pprint
 
-from treeinterpreter import treeinterpreter as ti
+from . import transaction
+
+import logging
+logger = logging.getLogger(__name__)
+
+# from treeinterpreter import treeinterpreter as ti
 
 from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
-#from treeinterpreter import treeinterpreter as ti
-from sklearn import metrics
+# from treeinterpreter import treeinterpreter as ti
+# from sklearn import metrics
 
 PREDICTION_ACCOUNTS = [
     'Assets:DNB:Brukskonto',
@@ -40,6 +43,7 @@ def Prediction_Transactions(book):
             for split in tr.splits
         ):
             continue
+        logging.info('{} -> {}'.format(*[tr.splits[i].account.fullname for i in [0,1]]))
         yield tr
 
 def split(delimiters, string, maxsplit=0):
@@ -71,24 +75,24 @@ def extract_transaction_features(tr, acc_map):
         description.union(split(
             delimiters,
             str(tr.notes)))
-    return {
-        'full_description': tr.description,
-        'description': set(word for word in description if len(word) > 3),
-        'base_account': base_account,
-        'output_account': output_account,
-        'mapped_output_account': acc_map[output_account],
-        'amount': functools.reduce(lambda x,y: x or y, [spl.quantity for spl in tr.splits]),
-        'debit': debit,
-        'date': tr.post_date,
-        'day': tr.post_date.isoweekday(),
-        'isWeekend': int(tr.post_date.isoweekday() in [6, 7]),
-}
+    return transaction.Transaction(
+        full_description=tr.description,
+        description=set(word for word in description if len(word) > 3),
+        base_account=base_account,
+        output_account=output_account,
+        mapped_output_account=acc_map[output_account],
+        amount=functools.reduce(lambda x,y: x or y, [spl.quantity for spl in tr.splits]),
+        debit=debit,
+        date=tr.post_date,
+        day=tr.post_date.isoweekday(),
+        isWeekend=int(tr.post_date.isoweekday() in [6, 7]),
+    )
 
 def get_word_mapping(table):
     words = list(set(
         word.lower()
         for row in table
-        for word in row['description']
+        for word in row.description
     ))
     return {j:i for i, j in enumerate(words)}
 
@@ -106,7 +110,7 @@ MAPPED_OUTPUT_ACCOUNTS='mapped_output_accounts'
 
 class TransactionFeatureSet(object):
 
-    def __init__(self, book_file, cache=True):
+    def __init__(self, book_file):
         self.book = piecash.open_book(book_file, readonly=True)
 
         self.account_labels = [a.fullname for a in self.book.accounts]
@@ -130,7 +134,7 @@ class TransactionFeatureSet(object):
     def setup_classifier(self, transactions):
         self.word_map = get_word_mapping(transactions)
 
-        mapped_output_accounts = np.array([tr['mapped_output_account'] for tr in transactions], dtype=np.int)
+        mapped_output_accounts = np.array([tr.mapped_output_account for tr in transactions], dtype=np.int)
 
         mapped_description = self.get_mapped_description_features(transactions, self.word_map)
         self.fit_descriptions(mapped_description, mapped_output_accounts)
@@ -140,7 +144,7 @@ class TransactionFeatureSet(object):
 
 
     def fit(self, full_features, output_classes):
-        #print(metadata_features[0])
+        logger.info(full_features[0])
         self.full_classifier = RandomForestClassifier()
         self.full_classifier.fit(full_features, output_classes)
         #print("Score full classifier: {}".format(self.full_classifier.score(full_features, self.data[MAPPED_OUTPUT_ACCOUNTS])))
@@ -160,7 +164,7 @@ class TransactionFeatureSet(object):
     def print_prediction(self, predictions):
         predicted_labels = [self.data[ACCOUNT_LABELS][o] for o in predictions]
         output_labels = [self.data[ACCOUNT_LABELS][o] for o in self.data[MAPPED_OUTPUT_ACCOUNTS]]
-        print('\n'.join(str(o) for o in zip(self.data[MAPPED_OUTPUT_ACCOUNTS], ['{} -> {}'.format(pred,out,) for pred, out in zip(predicted_labels, output_labels)])))
+        logger.info('\n'.join(str(o) for o in zip(self.data[MAPPED_OUTPUT_ACCOUNTS], ['{} -> {}'.format(pred,out,) for pred, out in zip(predicted_labels, output_labels)])))
 
     def fit_descriptions(self, mapped_descriptions, mapped_accounts):
         self.description_model = GaussianNB()
@@ -176,25 +180,25 @@ class TransactionFeatureSet(object):
         features = np.zeros((len(data), len(word_map)))
         for i, row in enumerate(data):
             for word, j in word_map.items():
-                features[i][j] = 1 if word in row['description'] else 0
+                features[i][j] = 1 if word in row.description else 0
         return features
 
     @staticmethod
     def get_output_accounts(data):
-        mapped_output_accounts = np.array([tr['mapped_output_account'] for tr in data], dtype=np.int)
+        mapped_output_accounts = np.array([tr.mapped_output_account for tr in data], dtype=np.int)
         #for i,  in enumerate(data):
         #    mapped_output_accounts[i] = row['mapped_output_account']
         #return output_accounts, mapped_output_accounts
 
-    feature_list = ['base_account', 'debit', 'amount', 'day', 'isWeekend']
+    feature_list = ['base_account', 'amount', 'day', 'isWeekend']
 
     @classmethod
-    def get_mapped_metadata(cls, data, acc_map):
-        features = np.zeros((len(data), len(cls.feature_list)))
-        for i, tr in enumerate(data):
+    def get_mapped_metadata(cls, transactions, acc_map):
+        features = np.zeros((len(transactions), len(cls.feature_list)))
+        for i, tr in enumerate(transactions):
             for j, feature in enumerate(cls.feature_list[1:]):
-                features[i][j] = tr[feature]
-            features[i][-1] = acc_map[tr['base_account']]
+                features[i][j] = getattr(tr, feature)
+            features[i][-1] = acc_map[tr.base_account]
         return features
 
 if __name__ == '__main__':
@@ -202,14 +206,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Export gnucash transactions')
 
     parser.add_argument('--account', default=None, help="Filter by account")
-    parser.add_argument('--use-cache', action='store_true')
     parser.add_argument('-v', '--invert', action='store_true', help="Invert keyword matching.")
     parser.add_argument('file_', help="gnucash file")
     parser.add_argument('keywords', nargs='*', help="List of required keywords")
 
     args = parser.parse_args()
 
-    featureset = TransactionFeatureSet(args.file_, cache=args.use_cache)
+    featureset = TransactionFeatureSet(args.file_)
 
     from .assign_transactions import assignAccounts
     assignAccounts(
