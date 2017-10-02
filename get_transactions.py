@@ -3,6 +3,7 @@ import piecash
 import functools
 
 from . import transaction
+from .common import word_inclusion_criteria
 
 import logging
 logger = logging.getLogger(__name__)
@@ -24,8 +25,11 @@ PREDICTION_ACCOUNTS = [
 def OFX_transactions(book):
     for tr in book.transactions:
         if tr.notes is None or not 'OFX ext. info: |' in tr.notes:
+			# Only want transactions that we have imported ourselves, in order
+			# to avoid duplicates. We put unique id in notes.
             continue
         if len(tr.splits) != 2:
+			# We don't do multi-split transactions.
             continue
         if not any(
             split.account.fullname in PREDICTION_ACCOUNTS
@@ -36,6 +40,8 @@ def OFX_transactions(book):
 
 def Prediction_Transactions(book):
     for tr in book.transactions:
+        #if tr.notes and 'OFX' in tr.notes:
+        #    logger.info(tr.notes)
         if len(tr.splits) != 2:
             continue
         if not any(
@@ -43,7 +49,7 @@ def Prediction_Transactions(book):
             for split in tr.splits
         ):
             continue
-        logging.info('{} -> {}'.format(*[tr.splits[i].account.fullname for i in [0,1]]))
+        #logging.info('{} -> {}'.format(*[tr.splits[i].account.fullname for i in [0,1]]))
         yield tr
 
 def split(delimiters, string, maxsplit=0):
@@ -54,6 +60,8 @@ def split(delimiters, string, maxsplit=0):
 
 def extract_transaction_features(tr, acc_map):
     delimiters = [" ", "/"]
+    if 'Dato' in tr.description:
+        tr.description = tr.description.split('Dato')[0]
     description = set(split(delimiters, tr.description))
     if tr.splits[0].account.fullname in PREDICTION_ACCOUNTS:
         base_account = tr.splits[0].account.fullname
@@ -64,20 +72,27 @@ def extract_transaction_features(tr, acc_map):
         output_account = tr.splits[0].account.fullname
         debit = 1
     assert base_account in PREDICTION_ACCOUNTS
+    fitid=None
     try:
-        description.union(split(
-            delimiters,
-            tr.notes.split('OFX ext. info: |Memo:')[1]
-        ))
-    except AttributeError:
+        if 'OFX ext. info:' in tr.notes:
+            if '|Memo:' in tr.notes:
+                description.union(split(
+                    delimiters,
+                    tr.notes.split('|Memo:')[1]
+                ))
+            if '|FITID:' in tr.notes:
+                fitid = tr.notes.split('|FITID:')[1].split('|')[0]
+                logger.info("Found FITID {}".format(fitid))
+    except (AttributeError, TypeError):
         pass
     except IndexError:
+        logger.info(tr.notes)
         description.union(split(
             delimiters,
             str(tr.notes)))
     return transaction.Transaction(
         full_description=tr.description,
-        description=set(word for word in description if len(word) > 3),
+        description=set(word.lower() for word in description if word_inclusion_criteria(word)),
         base_account=base_account,
         output_account=output_account,
         mapped_output_account=acc_map[output_account],
@@ -86,6 +101,7 @@ def extract_transaction_features(tr, acc_map):
         date=tr.post_date,
         day=tr.post_date.isoweekday(),
         isWeekend=int(tr.post_date.isoweekday() in [6, 7]),
+        fitid=fitid,
     )
 
 def get_word_mapping(table):
@@ -111,7 +127,7 @@ MAPPED_OUTPUT_ACCOUNTS='mapped_output_accounts'
 class TransactionFeatureSet(object):
 
     def __init__(self, book_file):
-        self.book = piecash.open_book(book_file, readonly=True)
+        self.book = piecash.open_book(book_file, readonly=False)
 
         self.account_labels = [a.fullname for a in self.book.accounts]
         self.acc_map = {j:i for i, j in enumerate(self.account_labels)}
@@ -121,10 +137,21 @@ class TransactionFeatureSet(object):
         ]
         self.setup_classifier(self.data)
 
+        self.gc_accounts = {
+                account.fullname : account
+				for account in self.book.accounts
+        }
+        #logger.info(self.gc_accounts)
+            
+
+    def get_description_features(self, transactions):
+        mapped_description = self.get_mapped_description_features(transactions, self.word_map)
+        return self.get_description_probabilities(mapped_description)
+        
+
     def get_full_features(self, transactions):
         mapped_metadata = self.get_mapped_metadata(transactions, self.acc_map)
-        mapped_description = self.get_mapped_description_features(transactions, self.word_map)
-        description_features = self.get_description_probabilities(mapped_description)
+        description_features = self.get_description_features(transactions)
         full_features = np.hstack([
             mapped_metadata,
             description_features,
@@ -134,19 +161,18 @@ class TransactionFeatureSet(object):
     def setup_classifier(self, transactions):
         self.word_map = get_word_mapping(transactions)
 
-        mapped_output_accounts = np.array([tr.mapped_output_account for tr in transactions], dtype=np.int)
+        self.mapped_output_accounts = np.array([tr.mapped_output_account for tr in transactions], dtype=np.int)
 
         mapped_description = self.get_mapped_description_features(transactions, self.word_map)
-        self.fit_descriptions(mapped_description, mapped_output_accounts)
+        self.fit_descriptions(mapped_description, self.mapped_output_accounts)
 
         self.full_features = self.get_full_features(transactions)
-        self.fit(self.full_features, mapped_output_accounts)
+        self.fit()
 
 
-    def fit(self, full_features, output_classes):
-        logger.info(full_features[0])
-        self.full_classifier = RandomForestClassifier()
-        self.full_classifier.fit(full_features, output_classes)
+    def fit(self):
+        self.full_classifier = RandomForestClassifier(n_estimators=30)
+        self.full_classifier.fit(self.full_features, self.mapped_output_accounts)
         #print("Score full classifier: {}".format(self.full_classifier.score(full_features, self.data[MAPPED_OUTPUT_ACCOUNTS])))
         #instances = full_features[[0,4,10]]
         #prediction, bias, contributions = ti.predict(self.full_classifier, instances)
@@ -186,22 +212,35 @@ class TransactionFeatureSet(object):
     @staticmethod
     def get_output_accounts(data):
         mapped_output_accounts = np.array([tr.mapped_output_account for tr in data], dtype=np.int)
-        #for i,  in enumerate(data):
-        #    mapped_output_accounts[i] = row['mapped_output_account']
-        #return output_accounts, mapped_output_accounts
 
     feature_list = ['base_account', 'amount', 'day', 'isWeekend']
 
     @classmethod
     def get_mapped_metadata(cls, transactions, acc_map):
         features = np.zeros((len(transactions), len(cls.feature_list)))
-        for i, tr in enumerate(transactions):
-            for j, feature in enumerate(cls.feature_list[1:]):
-                features[i][j] = getattr(tr, feature)
-            features[i][-1] = acc_map[tr.base_account]
+        try:
+            for i, tr in enumerate(transactions):
+                for j, feature in enumerate(cls.feature_list[1:]):
+                    features[i][j] = getattr(tr, feature)
+                features[i][-1] = acc_map[tr.base_account]
+        except KeyError:
+            logger.info(tr)
+            raise
+
         return features
 
 if __name__ == '__main__':
+    import logging.config
+    from .logging_config import config
+    logging.config.dictConfig(config)
+    logging.captureWarnings(True)
+
+    import numpy
+    def err_handler(type_, flag):
+        logger.warning("Floating point error (%s), with flag %s" % (type, flag))
+    numpy.seterrcall(err_handler)
+    numpy.seterr(all='call')
+
     import argparse
     parser = argparse.ArgumentParser(description='Export gnucash transactions')
 
@@ -217,7 +256,5 @@ if __name__ == '__main__':
     from .assign_transactions import assignAccounts
     assignAccounts(
         featureset.data,
-        featureset.full_features,
-        featureset.full_classifier,
-        featureset.account_labels
+        featureset
     )
