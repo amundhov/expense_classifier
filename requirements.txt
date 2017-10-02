@@ -1,0 +1,6 @@
+sklearn
+numpy
+scipy
+xmltodict
+piecash
+urwid
