@@ -91,19 +91,26 @@ if __name__ == '__main__':
 
     account = get_account(ofx_dict)
 
-    transactions = [
-       extract_transaction_features(tr, account)
-	   for tr in  ofx_dict['BANKTRANLIST']['STMTTRN']
-	   if tr['DTPOSTED'] is not None
-    ]
     from .get_transactions import TransactionFeatureSet
     featureset = TransactionFeatureSet(args.gnucash)
 
-	#logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+    if account in featureset.account_codes:
+        account = featureset.account_codes[account]
+
+    transactions = [
+       extract_transaction_features(tr, account)
+       for tr in  ofx_dict['BANKTRANLIST']['STMTTRN']
+       if tr['DTPOSTED'] is not None
+    ]
 
     from .assign_transactions import assignAccounts
     assignAccounts(
-		threshold=args.threshold,
+        threshold=args.threshold,
         transactions=transactions,
         feature_set=featureset,
     )
+
+    logger.info('Transaction outputs are now {}'.format(
+        ' '.join(tr.output_account for tr in transactions)
+    ))
+

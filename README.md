@@ -10,7 +10,7 @@ should match exactly the account you want to import into.
 
 ## Installation
 
-This software is provided as is. Always keep a backup og your Gnucash book, and
+This software is provided as is. Always keep a backup of your Gnucash book, and
 don't come running to me if your file got corrupted (do feel welcome to file a
 bug).
 
@@ -19,6 +19,9 @@ git clone ...
 pip install -r requirements.txt
 
 ## Usage
+
+Bank statements often are available in comma separated files (csv) or excel
+file formats. To convert these into OFX you could take a look at 
 
 
 ## Contributor Ideas

@@ -25,11 +25,11 @@ PREDICTION_ACCOUNTS = [
 def OFX_transactions(book):
     for tr in book.transactions:
         if tr.notes is None or not 'OFX ext. info: |' in tr.notes:
-			# Only want transactions that we have imported ourselves, in order
-			# to avoid duplicates. We put unique id in notes.
+            # Only want transactions that we have imported ourselves, in order
+            # to avoid duplicates. We put unique id in notes.
             continue
         if len(tr.splits) != 2:
-			# We don't do multi-split transactions.
+            # We don't do multi-split transactions.
             continue
         if not any(
             split.account.fullname in PREDICTION_ACCOUNTS
@@ -82,7 +82,7 @@ def extract_transaction_features(tr, acc_map):
                 ))
             if '|FITID:' in tr.notes:
                 fitid = tr.notes.split('|FITID:')[1].split('|')[0]
-                logger.info("Found FITID {}".format(fitid))
+                logger.debug("Found FITID {}".format(fitid))
     except (AttributeError, TypeError):
         pass
     except IndexError:
@@ -129,6 +129,7 @@ class TransactionFeatureSet(object):
     def __init__(self, book_file):
         self.book = piecash.open_book(book_file, readonly=False)
 
+        self.account_codes = {a.code: a.fullname for a in self.book.accounts if a.code}
         self.account_labels = [a.fullname for a in self.book.accounts]
         self.acc_map = {j:i for i, j in enumerate(self.account_labels)}
         self.data = [
@@ -139,9 +140,9 @@ class TransactionFeatureSet(object):
 
         self.gc_accounts = {
                 account.fullname : account
-				for account in self.book.accounts
+                for account in self.book.accounts
         }
-        #logger.info(self.gc_accounts)
+        logger.info(self.acc_map)
             
 
     def get_description_features(self, transactions):
