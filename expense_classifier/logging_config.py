@@ -8,7 +8,7 @@ config = {
     },
     'handlers': { 
         'default': { 
-            'level': 'INFO',
+            'level': 'DEBUG',
             'formatter': 'standard',
             'class': 'logging.FileHandler',
 			"filename":"info.log"
@@ -17,7 +17,7 @@ config = {
     'loggers': { 
         '': { 
             'handlers': ['default'],
-            'level': 'INFO',
+            'level': 'DEBUG',
             'propagate': True
         },
     } 
