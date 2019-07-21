@@ -24,7 +24,7 @@ class TransactionBox(urwid.Pile):
         self.date = urwid.Text('', align='right')
         self.amount = urwid.Text('', align='left')
         self.description = urwid.Text('')
-        self.progress = urwid.Text('(0/0)', align='right')
+        self.progress = urwid.Text('(0 Assigned of 0)', align='right')
         first_line = urwid.Columns([self.amount, self.date])
         second_line = urwid.Columns([self.description, self.progress])
         super().__init__([first_line, second_line])
@@ -188,9 +188,8 @@ align='center')
         self.transaction_box.loadTransaction(transaction)
 
         self._predictions = self.classifier.get_predictions(transaction)
-
         self._predictions = sorted(
-            self._predictions,
+            s lf._predictions,
             reverse=True,
             key=lambda x: x[1],
         )
@@ -213,7 +212,6 @@ align='center')
             self.listbox.keypress(size, key)
         elif key == 'enter':
             self.commit()
-            self.transaction_set.flush_transactions()
             self.refit()
         elif key == 'right' or key == 'tab':
             self.commit()

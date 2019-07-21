@@ -82,7 +82,7 @@ def load_transactions(ofx_root):
        if tr['DTPOSTED'] is not None
     ]
 
-if __name__ == '__main__':
+def get_txs():
     import logging.config
     from .logging_config import config
     logging.config.dictConfig(config)
@@ -100,11 +100,10 @@ if __name__ == '__main__':
     parser.add_argument('paths', nargs='*', help="OFX files to process")
 
     args = parser.parse_args()
-
-
+    
     ofx_roots = []
     for path in args.paths:
-        with open(path, encoding='latin1') as file_:
+        with open(path) as file_:
             ofx_roots.append((
                 xmltodict.parse(file_.read()),
                 path
@@ -115,6 +114,11 @@ if __name__ == '__main__':
         for root, path in ofx_roots
         for tr in load_transactions(root)
     ]
+    return args, txs, ofx_roots
+
+
+if __name__ == '__main__':
+    args, txs, ofx_roots = get_txs()
 
     def export_transactions():
         logger.info('Unparsing updated transactions')

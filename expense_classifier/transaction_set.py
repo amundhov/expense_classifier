@@ -1,8 +1,7 @@
 
 class TransactionSet(object):
     def __init__(self, transactions, export_function):
-        self.transactions = transactions
-        self.base_accounts = {tr.base_account for tr in transactions}
+        self.transactions = sorted(transactions, key=lambda tr:tr.fitid)
         self.export_function = export_function
 
     def flush_transactions(self):
@@ -10,9 +9,7 @@ class TransactionSet(object):
 
     @property
     def account_labels(self):
-        return list(self.base_accounts.union({
-            tr.output_account for tr in self.assigned_transactions
-        }))
+        return sorted(tr.output_account for tr in self.assigned_transactions)
 
     @property
     def assigned_transactions(self):
@@ -27,4 +24,5 @@ class TransactionSet(object):
             tr for tr in self.transactions
             if tr not in self.assigned_transactions
         ]
+
 
