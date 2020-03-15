@@ -1,12 +1,8 @@
 # Gnucash Expense Classifier
 
-Designed to take a list of transactions for a Gnucash account and assign a
-counter-account based on existing transactions in a Gnucash file. Typically
-used to classify expenses going out of your checking account or credit card
-history.
-
-Input formats accepted are QIF and OFX. The account name of the import files
-should match exactly the account you want to import into.
+Designed to work with OFX and other financial ledger files, to assign and
+predict accounts based on existing transactions. Typical use cases are to
+classify expenses going out of your checking account or credit card statements.
 
 ## Installation
 
@@ -15,14 +11,11 @@ don't come running to me if your file got corrupted (do feel welcome to file a
 bug).
 
 git clone ...
-
 pip install -r requirements.txt
 
 ## Usage
 
-Bank statements often are available in comma separated files (csv) or excel
-file formats. To convert these into OFX you could take a look at 
-
+TODO
 
 ## Contributor Ideas
 
