@@ -95,7 +95,7 @@ align='center')
 
     @property
     def txs_to_assign(self):
-        return sorted(self.transaction_set.transactions, key=lambda x: x.date)
+        return sorted(self.transaction_set.unassigned_transactions, key=lambda x: x.date)
 
     def _transaction_line(self, output_account, probability):
         return urwid.AttrMap(
