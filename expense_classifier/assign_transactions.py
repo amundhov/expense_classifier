@@ -213,6 +213,8 @@ align='center')
         elif key == 'enter':
             self.commit()
             self.refit()
+        elif key == '<F5>':
+            self.transaction_set.flush_transactions()
         elif key == 'right' or key == 'tab':
             self.commit()
             self.reset_filter()
