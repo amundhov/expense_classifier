@@ -189,7 +189,7 @@ align='center')
 
         self._predictions = self.classifier.get_predictions(transaction)
         self._predictions = sorted(
-            s lf._predictions,
+            self._predictions,
             reverse=True,
             key=lambda x: x[1],
         )
